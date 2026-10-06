@@ -1,0 +1,24 @@
+services:
+  asspp:
+    build: .
+    image: assppweb:ipatool
+    ports:
+      - "8080:8080"
+    volumes:
+      # 数据目录：Apple 账号、下载的 IPA 包都存在这里。
+      # 电视盒子示例：把 32G U 盘挂载到 /mnt/usb 后改成：
+      #   - /mnt/usb/asspp-data:/data
+      - ./mnt/asspp-data:/data
+    environment:
+      - DATA_DIR=/data
+      - PORT=8080
+      # - ACCESS_PASSWORD=your-password
+      # - MAX_DOWNLOAD_MB=2048
+      # - AUTO_CLEANUP_DAYS=30
+      # - AUTO_CLEANUP_MAX_MB=20480
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "128m"
+        max-file: "5"
