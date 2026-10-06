@@ -49,29 +49,76 @@ export function removeIpatoolState(accountHash: string): void {
 }
 
 // --- Per-account serialization -------------------------------------------
-// ipatool commands for the same account share one keychain/cookie store;
-// concurrent invocations can corrupt it, so serialize per account.
+// ipatool commands for the same account share one keychain/cookie store.
+// Writes (login, download) are fully serialized. Reads (list-versions,
+// get-version-metadata) may run concurrently with each other but never
+// alongside a write.
 
-const locks = new Map<string, Promise<unknown>>();
+interface RWLock {
+  readers: number;
+  writer: Promise<unknown> | null;
+  writerRelease: (() => void) | null;
+  // Chain of pending writers; readers wait on the tail.
+  tail: Promise<unknown>;
+}
 
+const rwLocks = new Map<string, RWLock>();
+
+function getRWLock(key: string): RWLock {
+  let l = rwLocks.get(key);
+  if (!l) {
+    l = { readers: 0, writer: null, writerRelease: null, tail: Promise.resolve() };
+    rwLocks.set(key, l);
+  }
+  return l;
+}
+
+/** Exclusive lock for mutating ipatool operations (login, download). */
 export async function withAccountLock<T>(
   key: string,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const prev = locks.get(key) ?? Promise.resolve();
+  const l = getRWLock(key);
+  // Wait for the current tail (previous writers and reader generations).
+  const prev = l.tail;
   let release!: () => void;
   const cur = new Promise<void>((r) => {
     release = r;
   });
-  locks.set(
-    key,
-    prev.then(() => cur),
-  );
+  l.tail = prev.then(() => cur);
   await prev;
+  // Wait until active readers drain.
+  while (l.readers > 0) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
   try {
     return await fn();
   } finally {
     release();
+  }
+}
+
+/** Shared lock for read-only ipatool operations (list-versions, metadata). */
+export async function withAccountReadLock<T>(
+  key: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const l = getRWLock(key);
+  // Wait for the current tail, then register as a reader.
+  const prev = l.tail;
+  let release!: () => void;
+  const cur = new Promise<void>((r) => {
+    release = r;
+  });
+  l.tail = prev.then(() => cur);
+  await prev;
+  l.readers++;
+  // This generation's slot is done; later writers chain after us.
+  release();
+  try {
+    return await fn();
+  } finally {
+    l.readers--;
   }
 }
 
@@ -146,13 +193,18 @@ const IGNORED_FIELDS = new Set(['level', 'time', 'message']);
  * Run an ipatool command for one account and parse its `--format json` output.
  * Throws IpatoolError on failure (including the 2FA-required info message,
  * which ipatool reports with exit code 0).
+ *
+ * @param opts.shared - use the shared read lock for read-only commands
+ *   (list-versions, get-version-metadata). Never use for commands that
+ *   mutate auth state (login, download).
  */
 export async function runIpatool(
   accountHash: string,
   args: string[],
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; shared?: boolean } = {},
 ): Promise<IpatoolResult> {
-  return withAccountLock(accountHash, async () => {
+  const withLock = opts.shared ? withAccountReadLock : withAccountLock;
+  return withLock(accountHash, async () => {
     const stateDir = ipatoolStateDir(accountHash);
     const env = {
       ...process.env,

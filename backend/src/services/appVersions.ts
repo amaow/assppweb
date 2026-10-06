@@ -44,14 +44,20 @@ async function fetchMetadata(
   externalVersionId: string,
 ): Promise<AppVersion | null> {
   try {
-    const res = await withSessionRetry(accountHash, () =>
-      runIpatool(accountHash, [
+    // Shared read lock: metadata fetches are read-only and run concurrently.
+    // No per-fetch session retry here — the session is validated once before
+    // the batch (see listAppVersions). Holding a read lock across relogin
+    // (which needs the write lock) would deadlock.
+    const res = await runIpatool(
+      accountHash,
+      [
         'get-version-metadata',
         '--app-id',
         appId,
         '--external-version-id',
         externalVersionId,
-      ]),
+      ],
+      { shared: true },
     );
     const version =
       typeof res.data['displayVersion'] === 'string'
@@ -84,6 +90,10 @@ export async function listAppVersions(
     return hit.versions;
   }
 
+  // Validate the session first with the exclusive lock (+ auto re-login).
+  // Metadata fetches below use the shared lock without per-fetch retry:
+  // holding a read lock across relogin (write lock) would deadlock, and the
+  // session was just validated so mid-batch expiry is unlikely.
   const listRes = await withSessionRetry(accountHash, () =>
     runIpatool(accountHash, ['list-versions', '--app-id', appId]),
   );
