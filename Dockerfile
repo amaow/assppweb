@@ -30,6 +30,11 @@ RUN apk add --no-cache curl tar && \
 # NOTE: must be Debian-based (glibc) — ipatool is dynamically linked against glibc
 # and will NOT run on Alpine/musl.
 FROM node:20-bookworm-slim
+# ca-certificates is REQUIRED: ipatool (Go) verifies Apple TLS certs against
+# the system bundle. bookworm-slim does not ship it by default.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=backend-build /app/backend/dist ./dist
 COPY --from=backend-build /app/backend/node_modules ./node_modules
