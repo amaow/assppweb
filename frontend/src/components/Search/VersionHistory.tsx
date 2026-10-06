@@ -36,9 +36,53 @@ export default function VersionHistory() {
   );
   const [versions, setVersions] = useState<AppVersion[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [total, setTotal] = useState(0);
   const [downloadingVersion, setDownloadingVersion] = useState<string | null>(
     null,
   );
+
+  const PAGE_SIZE = 15;
+
+  async function loadVersions(offset: number, append: boolean) {
+    if (!account || !app) return;
+    if (append) setLoadingMore(true);
+    else setLoading(true);
+    try {
+      const result = await apiGet<{
+        versions: AppVersion[];
+        total: number;
+        hasMore: boolean;
+      }>(
+        `/api/versions?accountHash=${encodeURIComponent(account.accountHash)}&appId=${app.id}&limit=${PAGE_SIZE}&offset=${offset}`,
+      );
+      setVersions((prev) => (append ? [...prev, ...result.versions] : result.versions));
+      setHasMore(result.hasMore);
+      setTotal(result.total);
+    } catch (e) {
+      addToast(getErrorMessage(e, t("search.versions.loadFailed")), "error");
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
+    }
+  }
+
+  const account = filteredAccounts.find(
+    (a) => a.accountHash === selectedAccount,
+  );
+
+  // Auto-load when the page opens and an account is selected.
+  useEffect(() => {
+    if (account && app && versions.length === 0 && !loading) {
+      loadVersions(0, false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account, app]);
+
+  function handleLoadMore() {
+    loadVersions(versions.length, true);
+  }
 
   useEffect(() => {
     if (
@@ -48,25 +92,6 @@ export default function VersionHistory() {
       setSelectedAccount(filteredAccounts[0].accountHash);
     }
   }, [filteredAccounts, selectedAccount]);
-
-  const account = filteredAccounts.find(
-    (a) => a.accountHash === selectedAccount,
-  );
-
-  async function handleLoadVersions() {
-    if (!account || !app) return;
-    setLoading(true);
-    try {
-      const result = await apiGet<AppVersion[]>(
-        `/api/versions?accountHash=${encodeURIComponent(account.accountHash)}&appId=${app.id}`,
-      );
-      setVersions(result);
-    } catch (e) {
-      addToast(getErrorMessage(e, t("search.versions.loadFailed")), "error");
-    } finally {
-      setLoading(false);
-    }
-  }
 
   async function handleDownloadVersion(externalVersionId: string) {
     if (!account || !app) return;
@@ -113,39 +138,37 @@ export default function VersionHistory() {
           </div>
         ) : (
           filteredAccounts.length > 0 && (
-            <div className="flex min-w-0 flex-col items-stretch gap-3 sm:flex-row sm:items-end">
-              <div className="min-w-0 flex-1">
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  {t("search.versions.account")}
-                </label>
-                <select
-                  value={selectedAccount}
-                  onChange={(e) => setSelectedAccount(e.target.value)}
-                  className="w-full min-w-0 rounded-md border border-gray-300 bg-white px-3 py-2 text-base text-gray-900 transition-colors focus:border-blue-500 focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-                >
-                  {filteredAccounts.map((a) => (
-                    <option key={a.accountHash} value={a.accountHash}>
-                      {a.name ? `${a.name} (${a.email})` : a.email}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <button
-                onClick={handleLoadVersions}
-                disabled={loading || !account}
-                className="w-full shrink-0 whitespace-normal rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50 sm:w-auto sm:whitespace-nowrap"
+            <div className="min-w-0">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                {t("search.versions.account")}
+              </label>
+              <select
+                value={selectedAccount}
+                onChange={(e) => setSelectedAccount(e.target.value)}
+                className="w-full min-w-0 rounded-md border border-gray-300 bg-white px-3 py-2 text-base text-gray-900 transition-colors focus:border-blue-500 focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
               >
-                {loading
-                  ? t("search.versions.loading")
-                  : t("search.versions.load")}
-              </button>
+                {filteredAccounts.map((a) => (
+                  <option key={a.accountHash} value={a.accountHash}>
+                    {a.name ? `${a.name} (${a.email})` : a.email}
+                  </option>
+                ))}
+              </select>
             </div>
           )
         )}
 
-        {versions.length > 0 && (
-          <div className="min-w-0 divide-y divide-gray-200 overflow-hidden rounded-lg border border-gray-200 bg-white dark:divide-gray-800 dark:border-gray-800 dark:bg-gray-900">
-            {versions.map((v) => {
+        {loading && (
+          <div className="flex items-center justify-center py-14">
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              {t("search.versions.loading")}
+            </p>
+          </div>
+        )}
+
+        {!loading && versions.length > 0 && (
+          <div className="min-w-0 overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
+            <div className="divide-y divide-gray-200 dark:divide-gray-800">
+              {versions.map((v) => {
               const isDownloading = downloadingVersion === v.externalVersionId;
 
               return (
@@ -175,6 +198,18 @@ export default function VersionHistory() {
                 </div>
               );
             })}
+            </div>
+            {hasMore && (
+              <button
+                onClick={handleLoadMore}
+                disabled={loadingMore}
+                className="w-full border-t border-gray-200 px-4 py-3 text-sm font-medium text-blue-600 transition-colors hover:bg-gray-50 disabled:opacity-50 dark:border-gray-800 dark:text-blue-400 dark:hover:bg-gray-800/50"
+              >
+                {loadingMore
+                  ? t("search.versions.loading")
+                  : t("search.versions.loadMore", { count: total - versions.length })}
+              </button>
+            )}
           </div>
         )}
       </div>

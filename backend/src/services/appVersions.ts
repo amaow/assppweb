@@ -16,7 +16,16 @@ export interface AppVersion {
 
 interface CacheEntry {
   updatedAt: number;
+  /** All external version IDs, newest-first. */
+  ids: string[];
+  /** Fetched metadata by external version ID. */
+  meta: Record<string, AppVersion>;
+}
+
+export interface VersionListResult {
   versions: AppVersion[];
+  total: number;
+  hasMore: boolean;
 }
 
 function loadCache(): Record<string, CacheEntry> {
@@ -75,54 +84,70 @@ async function fetchMetadata(
 }
 
 /**
- * List all historical versions of an app (display version + release date).
- * Results are cached per app for 24h. Metadata lookups run with bounded
- * concurrency since an app can have 50+ versions.
+ * List historical versions of an app (display version + release date).
+ * Only the requested page of metadata is fetched; the ID list and fetched
+ * metadata are cached for 24h. IDs are sorted newest-first.
  */
 export async function listAppVersions(
   accountHash: string,
   appId: string,
-): Promise<AppVersion[]> {
+  limit = 15,
+  offset = 0,
+): Promise<VersionListResult> {
   const cache = loadCache();
   const key = `${accountHash}:${appId}`;
-  const hit = cache[key];
-  if (hit && Date.now() - hit.updatedAt < CACHE_TTL_MS) {
-    return hit.versions;
+  let entry: CacheEntry | undefined = cache[key];
+  // Invalidate stale cache entries (old format without ids/meta).
+  if (entry && (!Array.isArray((entry as any).ids) || typeof (entry as any).meta !== 'object')) {
+    entry = undefined;
+  }
+  if (!entry || Date.now() - entry.updatedAt >= CACHE_TTL_MS) {
+    // Validate the session first with the exclusive lock (+ auto re-login).
+    const listRes = await withSessionRetry(accountHash, () =>
+      runIpatool(accountHash, ['list-versions', '--app-id', appId]),
+    );
+    const ids = listRes.data['externalVersionIdentifiers'];
+    if (!Array.isArray(ids)) {
+      throw new Error('无法获取版本列表');
+    }
+    const sorted = [...ids]
+      .map(String)
+      .sort((a, b) => Number(b) - Number(a));
+    entry = { updatedAt: Date.now(), ids: sorted, meta: {} };
+    cache[key] = entry;
+    saveCache(cache);
   }
 
-  // Validate the session first with the exclusive lock (+ auto re-login).
-  // Metadata fetches below use the shared lock without per-fetch retry:
-  // holding a read lock across relogin (write lock) would deadlock, and the
-  // session was just validated so mid-batch expiry is unlikely.
-  const listRes = await withSessionRetry(accountHash, () =>
-    runIpatool(accountHash, ['list-versions', '--app-id', appId]),
-  );
-  const ids = listRes.data['externalVersionIdentifiers'];
-  if (!Array.isArray(ids)) {
-    throw new Error('无法获取版本列表');
+  const ids = entry.ids;
+  const pageIds = ids.slice(offset, offset + limit);
+
+  // Fetch missing metadata with bounded concurrency (shared read lock).
+  const missing = pageIds.filter((id) => !entry!.meta[id]);
+  if (missing.length > 0) {
+    const queue = [...missing];
+    const workers = Array.from(
+      { length: Math.min(META_CONCURRENCY, queue.length) },
+      async () => {
+        while (queue.length > 0) {
+          const id = queue.shift()!;
+          const meta = await fetchMetadata(accountHash, appId, id);
+          if (meta) entry!.meta[id] = meta;
+        }
+      },
+    );
+    await Promise.all(workers);
+    entry.updatedAt = Date.now();
+    saveCache(cache);
   }
 
-  const versions: AppVersion[] = [];
-  // Bounded-concurrency pool over the id list.
-  const queue = [...ids].map(String);
-  const workers = Array.from(
-    { length: Math.min(META_CONCURRENCY, queue.length) },
-    async () => {
-      while (queue.length > 0) {
-        const id = queue.shift()!;
-        const meta = await fetchMetadata(accountHash, appId, id);
-        if (meta) versions.push(meta);
-      }
-    },
-  );
-  await Promise.all(workers);
-
-  // Sort newest-first by numeric external id (Apple ids increase over time).
-  versions.sort((a, b) => Number(b.externalVersionId) - Number(a.externalVersionId));
-
-  cache[key] = { updatedAt: Date.now(), versions };
-  saveCache(cache);
-  return versions;
+  const versions = pageIds
+    .map((id) => entry!.meta[id])
+    .filter((v): v is AppVersion => !!v);
+  return {
+    versions,
+    total: ids.length,
+    hasMore: offset + limit < ids.length,
+  };
 }
 
 /** Drop cached versions for an app (e.g. after a fresh release). */

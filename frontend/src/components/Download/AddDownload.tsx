@@ -108,10 +108,14 @@ export default function AddDownload() {
     if (!account || !app) return;
     setLoadingAction("versions");
     try {
-      const result = await apiGet<AppVersion[]>(
-        `/api/versions?accountHash=${encodeURIComponent(account.accountHash)}&appId=${app.id}`,
+      const result = await apiGet<{
+        versions: AppVersion[];
+        total: number;
+        hasMore: boolean;
+      }>(
+        `/api/versions?accountHash=${encodeURIComponent(account.accountHash)}&appId=${app.id}&limit=15`,
       );
-      setVersions(result);
+      setVersions(result.versions);
       setStep("versions");
     } catch (e) {
       addToast(getErrorMessage(e, t("downloads.add.versionsFailed")), "error");
