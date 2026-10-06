@@ -536,8 +536,11 @@ async function startDownload(task: DownloadTask, purchase: boolean) {
 
   try {
     // Serialize per account (shared keychain) + auto re-login on expiry.
-    await withAccountLock(task.accountHash, () =>
-      withSessionRetry(task.accountHash, runOnce),
+    // NOTE: withSessionRetry must wrap withAccountLock (not vice versa):
+    // relogin() -> runIpatool() acquires the same account lock, so holding
+    // the lock across the retry would deadlock.
+    await withSessionRetry(task.accountHash, () =>
+      withAccountLock(task.accountHash, runOnce),
     );
 
     if (!fs.existsSync(tmpOutput)) {

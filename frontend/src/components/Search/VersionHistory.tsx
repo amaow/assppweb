@@ -28,7 +28,10 @@ export default function VersionHistory() {
   const [selectedAccount, setSelectedAccount] = useState("");
 
   const filteredAccounts = useMemo(
-    () => accounts.filter((a) => storeIdToCountry(a.storeFront) === country),
+    () =>
+      accounts.filter(
+        (a) => !a.storeFront || storeIdToCountry(a.storeFront) === country,
+      ),
     [accounts, country],
   );
   const [versions, setVersions] = useState<AppVersion[]>([]);

@@ -49,8 +49,16 @@ export default function AddDownload() {
     t(`countries.${a}`, a).localeCompare(t(`countries.${b}`, b)),
   );
 
+  // If no account reports a region (server-side auth), offer all regions.
+  const effectiveCountryCodes =
+    availableCountryCodes.length > 0 ? availableCountryCodes : allCountryCodes;
+
   const filteredAccounts = useMemo(() => {
-    return accounts.filter((a) => storeIdToCountry(a.storeFront) === country);
+    // Accounts with unknown storeFront (server-side ipatool auth doesn't
+    // report it) are treated as available in every region.
+    return accounts.filter(
+      (a) => !a.storeFront || storeIdToCountry(a.storeFront) === country,
+    );
   }, [accounts, country]);
 
   useEffect(() => {
@@ -162,7 +170,7 @@ export default function AddDownload() {
                 setCountry(v);
                 setCountryTouched(true);
               }}
-              availableCountryCodes={availableCountryCodes}
+              availableCountryCodes={effectiveCountryCodes}
               allCountryCodes={allCountryCodes}
               disabled={isLoading}
               className="min-h-11 w-full min-w-0 max-w-full truncate disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-500 dark:disabled:bg-gray-800/50 dark:disabled:text-gray-400"

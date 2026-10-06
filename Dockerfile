@@ -27,7 +27,9 @@ RUN apk add --no-cache curl tar && \
     chmod +x /tmp/ipatool
 
 # Stage 4: Runtime
-FROM node:20-alpine
+# NOTE: must be Debian-based (glibc) — ipatool is dynamically linked against glibc
+# and will NOT run on Alpine/musl.
+FROM node:20-bookworm-slim
 WORKDIR /app
 COPY --from=backend-build /app/backend/dist ./dist
 COPY --from=backend-build /app/backend/node_modules ./node_modules
