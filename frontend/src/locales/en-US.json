@@ -86,6 +86,7 @@
       "account": "Account",
       "load": "Load Versions",
       "loading": "Loading...",
+      "loadMore": "Load more ({{count}} remaining)",
       "loadDetails": "Load details",
       "download": "Download",
       "downloading": "Downloading..."
