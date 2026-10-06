@@ -43,7 +43,9 @@ export default function ProductDetail() {
 
   const filteredAccounts = useMemo(
     () =>
-      productAccounts.filter((a) => storeIdToCountry(a.storeFront) === country),
+      productAccounts.filter(
+        (a) => !a.storeFront || storeIdToCountry(a.storeFront) === country,
+      ),
     [productAccounts, country],
   );
 

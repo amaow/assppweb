@@ -109,6 +109,11 @@ const ERROR_MAP: Array<[RegExp, IpatoolErrorCode, string]> = [
   ],
   [/too many requests|rate limit/i, 'RATE_LIMITED', '请求过于频繁，请稍后再试'],
   [/account.*locked|locked.*account/i, 'AUTH_FAILED', '该 Apple ID 已被锁定，请先解锁'],
+  [
+    /no usable authentication response|unexpected response from apple|authentication request failed/i,
+    'UNKNOWN',
+    'Apple 认证服务器无响应（可能是网络或地区问题），请稍后重试或换个网络再试',
+  ],
 ];
 
 export function mapIpatoolError(raw: string): IpatoolError {
